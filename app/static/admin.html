@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Model-Gate Operator Console</title>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --panel: #131a2a;
+      --panel-alt: #1a2337;
+      --border: #28344f;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-hover: #0284c7;
+      --success: #22c55e;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      line-height: 1.5;
+    }
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 1.25rem;
+      letter-spacing: -0.02em;
+    }
+    .badge {
+      font-size: 0.75rem;
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      font-weight: 600;
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+    }
+    .badge.ok {
+      background: rgba(34, 197, 94, 0.15);
+      color: var(--success);
+      border-color: rgba(34, 197, 94, 0.35);
+    }
+    .badge.err {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--danger);
+      border-color: rgba(239, 68, 68, 0.35);
+    }
+    .auth-bar {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    input, select, textarea {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.5rem 0.75rem;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 0.875rem;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    button {
+      background: var(--accent);
+      color: #0b0f19;
+      border: none;
+      padding: 0.5rem 0.9rem;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    button:hover { background: var(--accent-hover); color: #fff; }
+    button.secondary {
+      background: var(--panel-alt);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    button.danger {
+      background: rgba(239, 68, 68, 0.18);
+      color: var(--danger);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+    main {
+      max-width: 1280px;
+      margin: 1.5rem auto;
+      padding: 0 1.5rem;
+      display: grid;
+      gap: 1.5rem;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem;
+    }
+    .stat-label {
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .stat-value {
+      font-size: 1.65rem;
+      font-weight: 700;
+      margin-top: 0.25rem;
+      font-family: var(--mono);
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 0.85rem;
+      margin-top: 0.75rem;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+    .form-group label {
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+    .key-banner {
+      display: none;
+      margin-top: 1rem;
+      padding: 1rem;
+      border-radius: 8px;
+      background: rgba(34, 197, 94, 0.12);
+      border: 1px solid rgba(34, 197, 94, 0.4);
+    }
+    .key-banner code {
+      font-family: var(--mono);
+      font-size: 0.95rem;
+      color: #86efac;
+      word-break: break-all;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.86rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.65rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+    }
+    code.mono {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      background: var(--panel-alt);
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>Model-Gate Operator Console</h1>
+      <span class="badge" id="upstreamBadge">Zero-Leak Gemini Proxy</span>
+    </div>
+    <div class="auth-bar">
+      <input type="password" id="adminKeyInput" placeholder="Enter ADMIN_MASTER_KEY" style="width: 240px;" />
+      <button onclick="connectAdmin()">Connect</button>
+      <button class="secondary" onclick="refreshAll()">Refresh</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="stats-grid">
+      <div class="card">
+        <div class="stat-label">Upstream Gemini Key</div>
+        <div class="stat-value" id="statGeminiStatus">Locked</div>
+      </div>
+      <div class="card">
+        <div class="stat-label">Active Virtual Keys</div>
+        <div class="stat-value" id="statActiveKeys">0</div>
+      </div>
+      <div class="card">
+        <div class="stat-label">Total Proxied Requests</div>
+        <div class="stat-value" id="statTotalRequests">0</div>
+      </div>
+      <div class="card">
+        <div class="stat-label">Total Tokens Consumed</div>
+        <div class="stat-value" id="statTotalTokens">0</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 style="margin-top:0; font-size:1.05rem;">Issue Virtual Consumer Key (vk_live_...)</h2>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Consumer Name / Label</label>
+          <input type="text" id="newKeyName" placeholder="e.g. alice-prototype" />
+        </div>
+        <div class="form-group">
+          <label>Allowed Virtual Models (comma-separated)</label>
+          <input type="text" id="newKeyModels" value="limited-default,gemini-flash-lite" />
+        </div>
+        <div class="form-group">
+          <label>Max Output Tokens / Request</label>
+          <input type="number" id="newKeyMaxTokens" value="1024" />
+        </div>
+        <div class="form-group">
+          <label>Max Input Chars / Request</label>
+          <input type="number" id="newKeyMaxChars" value="16000" />
+        </div>
+        <div class="form-group">
+          <label>RPM Rate Limit</label>
+          <input type="number" id="newKeyRpm" value="15" />
+        </div>
+        <div class="form-group">
+          <label>Total Token Budget (0 = unlimited)</label>
+          <input type="number" id="newKeyBudget" value="50000" />
+        </div>
+      </div>
+      <div class="form-group" style="margin-top: 0.75rem;">
+        <label>Forced System Prompt (optional operator guardrail)</label>
+        <input type="text" id="newKeySystemPrompt" placeholder="Optional system instruction prepended to every request" />
+      </div>
+      <div style="margin-top: 1rem;">
+        <button onclick="mintKey()">Mint Virtual Key</button>
+      </div>
+      <div class="key-banner" id="newKeyBanner">
+        <div style="font-size:0.82rem; color:#bbf7d0; margin-bottom:0.35rem;">
+          Copy this virtual key now. It is hashed with HMAC-SHA256 and never stored in plaintext:
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem;">
+          <code id="mintedKeyText"></code>
+          <button class="secondary" onclick="copyMintedKey()">Copy Key</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 style="margin-top:0; font-size:1.05rem;">Issued Virtual Keys & Quotas</h2>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Prefix</th>
+              <th>Consumer</th>
+              <th>Allowed Models</th>
+              <th>Limits (Tokens / RPM)</th>
+              <th>Usage (Tokens / Budget)</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="keysTableBody">
+            <tr><td colspan="7" style="color:var(--muted);">Enter ADMIN_MASTER_KEY and click Connect.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 style="margin-top:0; font-size:1.05rem;">Model Alias Mapping & Recent Audit Logs</h2>
+      <div id="modelMapBox" style="margin-bottom:1rem; font-size:0.85rem; color:var(--muted);"></div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Time (UTC)</th>
+              <th>Request ID</th>
+              <th>Key ID</th>
+              <th>Virtual Model</th>
+              <th>Tokens (P / C / Total)</th>
+              <th>Status</th>
+              <th>Latency</th>
+            </tr>
+          </thead>
+          <tbody id="logsTableBody">
+            <tr><td colspan="7" style="color:var(--muted);">No logs loaded.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    function getAdminKey() {
+      return sessionStorage.getItem("mg_admin_key") || document.getElementById("adminKeyInput").value.trim();
+    }
+
+    function connectAdmin() {
+      const val = document.getElementById("adminKeyInput").value.trim();
+      if (val) {
+        sessionStorage.setItem("mg_admin_key", val);
+      }
+      refreshAll();
+    }
+
+    async function apiFetch(path, options = {}) {
+      const adminKey = getAdminKey();
+      const headers = Object.assign({
+        "Content-Type": "application/json",
+        "X-Admin-Key": adminKey
+      }, options.headers || {});
+      const resp = await fetch(path, Object.assign({}, options, { headers }));
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error((err.error && err.error.message) || ("HTTP " + resp.status));
+      }
+      return resp.json();
+    }
+
+    async function refreshAll() {
+      try {
+        const [cfg, keysRes, usageRes] = await Promise.all([
+          apiFetch("/admin/api/config"),
+          apiFetch("/admin/api/keys"),
+          apiFetch("/admin/api/usage?limit=25")
+        ]);
+
+        document.getElementById("statGeminiStatus").textContent = cfg.gemini_key_configured ? "Configured (Hidden)" : "Missing";
+        const keys = keysRes.data || [];
+        document.getElementById("statActiveKeys").textContent = keys.filter(k => k.is_active).length + " / " + keys.length;
+        document.getElementById("statTotalRequests").textContent = usageRes.summary.total_requests;
+        document.getElementById("statTotalTokens").textContent = usageRes.summary.total_tokens;
+
+        const mapPairs = Object.entries(cfg.model_map || {}).map(([k, v]) => `<code class="mono">${k} -> ${v}</code>`).join(" &nbsp; ");
+        document.getElementById("modelMapBox").innerHTML = "Configured Model Aliases: " + mapPairs;
+
+        const tbody = document.getElementById("keysTableBody");
+        if (!keys.length) {
+          tbody.innerHTML = `<tr><td colspan="7" style="color:var(--muted);">No consumer keys issued yet.</td></tr>`;
+        } else {
+          tbody.innerHTML = keys.map(k => {
+            const budgetStr = k.token_budget ? `${k.tokens_used} / ${k.token_budget}` : `${k.tokens_used} / unlimited`;
+            const statusBadge = k.is_active
+              ? `<span class="badge ok">Active</span>`
+              : `<span class="badge err">Revoked</span>`;
+            const toggleBtn = k.is_active
+              ? `<button class="danger" onclick="toggleKey('${k.key_id}', false)">Revoke</button>`
+              : `<button class="secondary" onclick="toggleKey('${k.key_id}', true)">Enable</button>`;
+            return `<tr>
+              <td><code class="mono">${k.key_prefix}</code></td>
+              <td>${k.name}</td>
+              <td>${(k.allowed_models || []).map(m => `<code class="mono">${m}</code>`).join(" ")}</td>
+              <td>${k.max_tokens_per_request} tok / ${k.rpm_limit} RPM</td>
+              <td>${budgetStr} (${k.requests_count} reqs)</td>
+              <td>${statusBadge}</td>
+              <td style="display:flex; gap:0.4rem;">
+                ${toggleBtn}
+                <button class="secondary" onclick="resetKeyUsage('${k.key_id}')">Reset Quota</button>
+              </td>
+            </tr>`;
+          }).join("");
+        }
+
+        const logsBody = document.getElementById("logsTableBody");
+        const logs = usageRes.logs || [];
+        if (!logs.length) {
+          logsBody.innerHTML = `<tr><td colspan="7" style="color:var(--muted);">No requests recorded yet.</td></tr>`;
+        } else {
+          logsBody.innerHTML = logs.map(l => `<tr>
+            <td>${l.created_at}</td>
+            <td><code class="mono">${l.request_id}</code></td>
+            <td><code class="mono">${l.key_id}</code></td>
+            <td><code class="mono">${l.requested_model}</code></td>
+            <td>${l.prompt_tokens} / ${l.completion_tokens} / <strong>${l.total_tokens}</strong></td>
+            <td>${l.status_code}</td>
+            <td>${l.latency_ms} ms</td>
+          </tr>`).join("");
+        }
+      } catch (err) {
+        alert("Admin API Error: " + err.message);
+      }
+    }
+
+    async function mintKey() {
+      const name = document.getElementById("newKeyName").value.trim();
+      if (!name) { alert("Please provide a consumer name."); return; }
+      const models = document.getElementById("newKeyModels").value.split(",").map(s => s.trim()).filter(Boolean);
+      const maxTokens = parseInt(document.getElementById("newKeyMaxTokens").value, 10) || 1024;
+      const maxChars = parseInt(document.getElementById("newKeyMaxChars").value, 10) || 16000;
+      const rpm = parseInt(document.getElementById("newKeyRpm").value, 10) || 15;
+      const budgetRaw = parseInt(document.getElementById("newKeyBudget").value, 10) || 0;
+      const sysPrompt = document.getElementById("newKeySystemPrompt").value.trim() || null;
+
+      try {
+        const res = await apiFetch("/admin/api/keys", {
+          method: "POST",
+          body: JSON.stringify({
+            name: name,
+            allowed_models: models,
+            max_tokens_per_request: maxTokens,
+            max_input_chars: maxChars,
+            rpm_limit: rpm,
+            token_budget: budgetRaw > 0 ? budgetRaw : null,
+            forced_system_prompt: sysPrompt
+          })
+        });
+        document.getElementById("mintedKeyText").textContent = res.api_key;
+        document.getElementById("newKeyBanner").style.display = "block";
+        document.getElementById("newKeyName").value = "";
+        refreshAll();
+      } catch (err) {
+        alert("Failed to create key: " + err.message);
+      }
+    }
+
+    function copyMintedKey() {
+      const text = document.getElementById("mintedKeyText").textContent;
+      navigator.clipboard.writeText(text);
+    }
+
+    async function toggleKey(keyId, active) {
+      await apiFetch("/admin/api/keys/" + keyId, {
+        method: "PATCH",
+        body: JSON.stringify({ is_active: active })
+      });
+      refreshAll();
+    }
+
+    async function resetKeyUsage(keyId) {
+      await apiFetch("/admin/api/keys/" + keyId, {
+        method: "PATCH",
+        body: JSON.stringify({ reset_usage: true })
+      });
+      refreshAll();
+    }
+  </script>
+</body>
+</html>
