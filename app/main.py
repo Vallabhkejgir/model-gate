@@ -14,14 +14,17 @@ from app.config import get_settings
 from app.database import init_db
 from app.routers import admin, proxy
 from app.security import redact_secrets
-from app.upstream import build_openai_error
+from app.upstream import build_openai_error, close_shared_client
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
-    """Initialize SQLite WAL schema on startup."""
+    """Initialize SQLite WAL schema on startup and close shared httpx client on shutdown."""
     init_db()
-    yield
+    try:
+        yield
+    finally:
+        await close_shared_client()
 
 
 app = FastAPI(

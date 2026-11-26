@@ -16,7 +16,7 @@ from app.rate_limit import check_token_budget, rate_limiter
 from app.upstream import (
     build_openai_error,
     forward_chat_completion,
-    stream_chat_completion,
+    prepare_stream_chat_completion,
 )
 
 router = APIRouter(prefix="/v1", tags=["OpenAI Compatible Proxy"])
@@ -74,6 +74,8 @@ def _build_proxy_headers(
             headers["X-Quota-Remaining-Tokens"] = "unlimited"
     if is_stream:
         headers["Content-Type"] = "text/event-stream; charset=utf-8"
+        headers["X-Accel-Buffering"] = "no"
+        headers["Connection"] = "keep-alive"
     return headers
 
 
@@ -276,10 +278,15 @@ async def create_chat_completion(
             *messages,
         ]
 
-    # 7. Clamp max_tokens to key.max_tokens_per_request
+    # 7. Smart max_tokens clamping to key.max_tokens_per_request
     cap = int(key_record.get("max_tokens_per_request") or 1024)
     req_max = payload.max_tokens or payload.max_completion_tokens
-    clamped_max_tokens = min(req_max, cap) if (req_max and req_max > 0) else cap
+    if req_max and req_max > 0:
+        clamped_max_tokens: Optional[int] = min(req_max, cap)
+    elif cap <= 2048:
+        clamped_max_tokens = cap
+    else:
+        clamped_max_tokens = None
 
     # 8. Sanitize outbound payload
     upstream_payload: Dict[str, Any] = {}
@@ -289,7 +296,10 @@ async def create_chat_completion(
 
     upstream_payload["model"] = upstream_model
     upstream_payload["messages"] = messages
-    upstream_payload["max_tokens"] = clamped_max_tokens
+    if clamped_max_tokens is not None:
+        upstream_payload["max_tokens"] = clamped_max_tokens
+    else:
+        upstream_payload.pop("max_tokens", None)
     upstream_payload["stream"] = bool(payload.stream)
 
     # 9. Dispatch Streaming vs Non-Streaming
@@ -310,13 +320,24 @@ async def create_chat_completion(
                 latency_ms=latency_ms,
             )
 
-        sse_generator = stream_chat_completion(
+        pre_status, err_payload, sse_generator = await prepare_stream_chat_completion(
             upstream_payload=upstream_payload,
             virtual_model_name=requested_model,
             upstream_model_name=upstream_model,
             on_complete=_on_stream_done,
             settings=settings,
         )
+        if err_payload is not None or sse_generator is None:
+            return JSONResponse(
+                status_code=pre_status,
+                content=err_payload,
+                headers=_build_proxy_headers(
+                    request_id=request_id,
+                    key_record=key_record,
+                    remaining_rpm=rpm_remaining,
+                    remaining_tokens=rem_tokens,
+                ),
+            )
         return StreamingResponse(
             sse_generator,
             status_code=200,

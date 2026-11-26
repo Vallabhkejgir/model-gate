@@ -196,11 +196,13 @@
     <div class="brand">
       <h1>Model-Gate Operator Console</h1>
       <span class="badge" id="upstreamBadge">Zero-Leak Gemini Proxy</span>
+      <span class="badge" id="sessionStatusBadge">Not Connected</span>
     </div>
     <div class="auth-bar">
       <input type="password" id="adminKeyInput" placeholder="Enter ADMIN_MASTER_KEY" style="width: 240px;" />
       <button onclick="connectAdmin()">Connect</button>
       <button class="secondary" onclick="refreshAll()">Refresh</button>
+      <button class="secondary" onclick="disconnectAdmin()">Logout</button>
     </div>
   </header>
 
@@ -318,38 +320,104 @@
 
   <script>
     function getAdminKey() {
-      return sessionStorage.getItem("mg_admin_key") || document.getElementById("adminKeyInput").value.trim();
+      const inputEl = document.getElementById("adminKeyInput");
+      const inputVal = inputEl ? inputEl.value.trim() : "";
+      if (inputVal) return inputVal;
+      return localStorage.getItem("mg_admin_key") || sessionStorage.getItem("mg_admin_key") || "";
     }
 
-    function connectAdmin() {
-      const val = document.getElementById("adminKeyInput").value.trim();
-      if (val) {
-        sessionStorage.setItem("mg_admin_key", val);
+    function setSessionBadge(connected) {
+      const badge = document.getElementById("sessionStatusBadge");
+      if (!badge) return;
+      if (connected) {
+        badge.textContent = "Connected";
+        badge.className = "badge ok";
+      } else {
+        badge.textContent = "Disconnected";
+        badge.className = "badge";
       }
-      refreshAll();
+    }
+
+    async function connectAdmin() {
+      const val = getAdminKey();
+      if (!val) {
+        alert("Please enter your ADMIN_MASTER_KEY.");
+        return;
+      }
+      try {
+        const resp = await fetch("/admin/api/session", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Admin-Key": val
+          },
+          body: JSON.stringify({ admin_key: val })
+        });
+        if (!resp.ok) {
+          localStorage.removeItem("mg_admin_key");
+          sessionStorage.removeItem("mg_admin_key");
+          setSessionBadge(false);
+          const err = await resp.json().catch(() => ({}));
+          throw new Error((err.error && err.error.message) || ("HTTP " + resp.status));
+        }
+        localStorage.setItem("mg_admin_key", val);
+        sessionStorage.setItem("mg_admin_key", val);
+        setSessionBadge(true);
+        await refreshAll();
+      } catch (err) {
+        alert("Admin Authentication Error: " + err.message);
+      }
+    }
+
+    async function disconnectAdmin() {
+      try {
+        await fetch("/admin/api/logout", {
+          method: "POST",
+          credentials: "same-origin"
+        });
+      } catch (_) {}
+      localStorage.removeItem("mg_admin_key");
+      sessionStorage.removeItem("mg_admin_key");
+      const inputEl = document.getElementById("adminKeyInput");
+      if (inputEl) inputEl.value = "";
+      setSessionBadge(false);
+      document.getElementById("keysTableBody").innerHTML =
+        `<tr><td colspan="7" style="color:var(--muted);">Enter ADMIN_MASTER_KEY and click Connect.</td></tr>`;
+      document.getElementById("logsTableBody").innerHTML =
+        `<tr><td colspan="7" style="color:var(--muted);">No logs loaded.</td></tr>`;
     }
 
     async function apiFetch(path, options = {}) {
       const adminKey = getAdminKey();
-      const headers = Object.assign({
-        "Content-Type": "application/json",
-        "X-Admin-Key": adminKey
-      }, options.headers || {});
-      const resp = await fetch(path, Object.assign({}, options, { headers }));
+      const baseHeaders = { "Content-Type": "application/json" };
+      if (adminKey) {
+        baseHeaders["X-Admin-Key"] = adminKey;
+      }
+      const headers = Object.assign(baseHeaders, options.headers || {});
+      const resp = await fetch(path, Object.assign({ credentials: "same-origin" }, options, { headers }));
       if (!resp.ok) {
+        if (resp.status === 401) {
+          localStorage.removeItem("mg_admin_key");
+          sessionStorage.removeItem("mg_admin_key");
+          setSessionBadge(false);
+        }
         const err = await resp.json().catch(() => ({}));
-        throw new Error((err.error && err.error.message) || ("HTTP " + resp.status));
+        const errorObj = new Error((err.error && err.error.message) || ("HTTP " + resp.status));
+        errorObj.status = resp.status;
+        throw errorObj;
       }
       return resp.json();
     }
 
-    async function refreshAll() {
+    async function refreshAll(opts = {}) {
       try {
         const [cfg, keysRes, usageRes] = await Promise.all([
           apiFetch("/admin/api/config"),
           apiFetch("/admin/api/keys"),
           apiFetch("/admin/api/usage?limit=25")
         ]);
+        setSessionBadge(true);
 
         document.getElementById("statGeminiStatus").textContent = cfg.gemini_key_configured ? "Configured (Hidden)" : "Missing";
         const keys = keysRes.data || [];
@@ -403,9 +471,21 @@
           </tr>`).join("");
         }
       } catch (err) {
+        if (opts && opts.silentOnUnauth && err && err.status === 401) {
+          return;
+        }
         alert("Admin API Error: " + err.message);
       }
     }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      const storedKey = localStorage.getItem("mg_admin_key") || sessionStorage.getItem("mg_admin_key") || "";
+      const inputEl = document.getElementById("adminKeyInput");
+      if (storedKey && inputEl && !inputEl.value) {
+        inputEl.value = storedKey;
+      }
+      refreshAll({ silentOnUnauth: true });
+    });
 
     async function mintKey() {
       const name = document.getElementById("newKeyName").value.trim();

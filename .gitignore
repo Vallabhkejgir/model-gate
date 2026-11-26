@@ -28,6 +28,8 @@ data/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+tests/test.py
+.no-mistakes.yaml
 
 # Distribution / packaging
 build/

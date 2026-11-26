@@ -19,26 +19,92 @@ from app.database import (
 )
 from app.models import CreateVirtualKeyRequest, UpdateVirtualKeyRequest
 from app.rate_limit import rate_limiter
-from app.security import verify_admin_key
+from app.security import (
+    create_admin_session_token,
+    verify_admin_key,
+    verify_admin_session_token,
+)
 
 router = APIRouter(prefix="/admin", tags=["Admin Control Plane"])
 
 _STATIC_ADMIN_HTML = Path(__file__).resolve().parent.parent / "static" / "admin.html"
+ADMIN_SESSION_COOKIE = "mg_admin_session"
 
 
 def require_admin_auth(request: Request) -> None:
-    """Authenticate operator requests using X-Admin-Key or Authorization: Bearer."""
+    """Authenticate operator requests using X-Admin-Key, Authorization: Bearer, or mg_admin_session cookie."""
+    header_key = request.headers.get("X-Admin-Key", "").strip()
+    if header_key:
+        if verify_admin_key(header_key):
+            return
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing operator admin key.",
+        )
+
+    auth_header = request.headers.get("Authorization", "").strip()
+    if auth_header.lower().startswith("bearer "):
+        bearer_key = auth_header[7:].strip()
+        if bearer_key:
+            if verify_admin_key(bearer_key):
+                return
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid or missing operator admin key.",
+            )
+
+    cookie_token = request.cookies.get(ADMIN_SESSION_COOKIE, "").strip()
+    if cookie_token and verify_admin_session_token(cookie_token):
+        return
+
+    raise HTTPException(
+        status_code=401,
+        detail="Invalid or missing operator admin key.",
+    )
+
+
+@router.post("/api/session")
+async def create_admin_session(request: Request) -> JSONResponse:
+    """Validate operator admin key and set an HttpOnly signed session cookie."""
     candidate = request.headers.get("X-Admin-Key", "").strip()
     if not candidate:
         auth_header = request.headers.get("Authorization", "").strip()
         if auth_header.lower().startswith("bearer "):
             candidate = auth_header[7:].strip()
 
+    if not candidate:
+        try:
+            body = await request.json()
+            if isinstance(body, dict) and isinstance(body.get("admin_key"), str):
+                candidate = body["admin_key"].strip()
+        except Exception:
+            pass
+
     if not candidate or not verify_admin_key(candidate):
         raise HTTPException(
             status_code=401,
             detail="Invalid or missing operator admin key.",
         )
+
+    token = create_admin_session_token()
+    resp = JSONResponse(status_code=200, content={"authenticated": True})
+    resp.set_cookie(
+        key=ADMIN_SESSION_COOKIE,
+        value=token,
+        max_age=86400 * 7,
+        httponly=True,
+        samesite="lax",
+        path="/admin",
+    )
+    return resp
+
+
+@router.post("/api/logout")
+async def logout_admin_session() -> JSONResponse:
+    """Clear the operator admin session cookie."""
+    resp = JSONResponse(status_code=200, content={"authenticated": False})
+    resp.delete_cookie(key=ADMIN_SESSION_COOKIE, path="/admin")
+    return resp
 
 
 @router.get("", response_class=HTMLResponse)

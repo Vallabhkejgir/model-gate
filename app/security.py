@@ -68,6 +68,27 @@ def verify_admin_key(candidate_key: str, settings: Settings | None = None) -> bo
     )
 
 
+def create_admin_session_token(settings: Settings | None = None) -> str:
+    """Compute an HMAC-SHA256 session cookie token bound to ADMIN_MASTER_KEY and KEY_HASH_PEPPER."""
+    cfg = settings or get_settings()
+    return hmac.new(
+        cfg.key_hash_pepper.encode("utf-8"),
+        f"admin_session:{cfg.admin_master_key}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def verify_admin_session_token(
+    token: str, settings: Settings | None = None
+) -> bool:
+    """Constant-time verification of an operator admin session cookie token."""
+    cfg = settings or get_settings()
+    if not token or not cfg.admin_master_key:
+        return False
+    expected = create_admin_session_token(cfg)
+    return hmac.compare_digest(token.encode("utf-8"), expected.encode("utf-8"))
+
+
 def parse_virtual_key_id(plaintext_key: str) -> str | None:
     """Extract the 8-hex key_id from a vk_live_<key_id>_<secret> token."""
     if not plaintext_key or not plaintext_key.startswith("vk_live_"):
