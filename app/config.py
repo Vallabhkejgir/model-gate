@@ -73,6 +73,26 @@ class Settings:
             os.environ.get("UPSTREAM_TIMEOUT_SECONDS", "60.0")
         )
     )
+    upstream_stream_read_timeout_seconds: float = field(
+        default_factory=lambda: float(
+            os.environ.get("UPSTREAM_STREAM_READ_TIMEOUT_SECONDS", "300.0")
+        )
+    )
+    sse_heartbeat_interval_seconds: float = field(
+        default_factory=lambda: float(
+            os.environ.get("SSE_HEARTBEAT_INTERVAL_SECONDS", "15.0")
+        )
+    )
+    upstream_max_connections: int = field(
+        default_factory=lambda: int(
+            os.environ.get("UPSTREAM_MAX_CONNECTIONS", "100")
+        )
+    )
+    upstream_max_keepalive_connections: int = field(
+        default_factory=lambda: int(
+            os.environ.get("UPSTREAM_MAX_KEEPALIVE_CONNECTIONS", "20")
+        )
+    )
 
     def resolve_upstream_model(self, requested_model: str) -> str:
         """Map a consumer-facing virtual model name to the actual upstream model."""

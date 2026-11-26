@@ -287,3 +287,40 @@ def test_cli_commands_create_list_usage_and_revoke(isolated_env, capsys):
     keys_after = json.loads(capsys.readouterr().out)
     target = [k for k in keys_after if k["key_id"] == key_id][0]
     assert target["is_active"] is False
+
+
+def test_admin_session_cookie_persistence_across_reload_and_logout(
+    client: TestClient,
+):
+    """Verify POST /admin/api/session sets HttpOnly cookie allowing Ctrl+R reloads without X-Admin-Key header."""
+    # 1. Invalid key rejected
+    bad_login = client.post(
+        "/admin/api/session", json={"admin_key": "invalid-admin-key"}
+    )
+    assert bad_login.status_code == 401
+
+    # 2. Valid key sets mg_admin_session HttpOnly cookie
+    login_resp = client.post(
+        "/admin/api/session", json={"admin_key": DUMMY_ADMIN_KEY}
+    )
+    assert login_resp.status_code == 200
+    assert login_resp.json()["authenticated"] is True
+    assert "mg_admin_session" in login_resp.cookies
+
+    # 3. Subsequent admin API calls succeed using ONLY the session cookie (no X-Admin-Key header, simulating Ctrl+R)
+    keys_resp = client.get("/admin/api/keys")
+    assert keys_resp.status_code == 200
+    assert keys_resp.json()["object"] == "list"
+
+    cfg_resp = client.get("/admin/api/config")
+    assert cfg_resp.status_code == 200
+    assert cfg_resp.json()["gemini_key_configured"] is True
+
+    # 4. Logout clears the session cookie and subsequent calls without header return 401
+    logout_resp = client.post("/admin/api/logout")
+    assert logout_resp.status_code == 200
+    assert logout_resp.json()["authenticated"] is False
+
+    client.cookies.clear()
+    after_logout = client.get("/admin/api/keys")
+    assert after_logout.status_code == 401

@@ -208,3 +208,179 @@ def test_streaming_sse_openai_compatibility_and_token_accounting(
     assert updated is not None
     assert updated["tokens_used"] == 15
     assert updated["requests_count"] == 1
+
+
+def test_sse_heartbeat_keep_alive_during_upstream_thinking_pause(
+    client: TestClient, consumer_key
+):
+    """Verify ': keep-alive' SSE comment frames are emitted while waiting for slow reasoning models."""
+    import asyncio
+    from app.config import reload_settings
+    from app.upstream import set_custom_transport
+
+    reload_settings(
+        gemini_api_key="AIzaSyDUMMY_SUPER_SECRET_GEMINI_KEY_99999",
+        sse_heartbeat_interval_seconds=0.04,
+    )
+
+    class SlowThinkingStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            # Simulate reasoning/thinking pause longer than heartbeat interval (0.04s)
+            await asyncio.sleep(0.11)
+            yield (
+                b'data: {"id":"chatcmpl-think","object":"chat.completion.chunk",'
+                b'"model":"gemini-4-argon-eap","choices":[{"index":0,"delta":'
+                b'{"role":"assistant","content":"Thought complete."},"finish_reason":"stop"}],'
+                b'"usage":{"prompt_tokens":9,"completion_tokens":3,"total_tokens":12}}\n\n'
+                b"data: [DONE]\n\n"
+            )
+
+        async def aclose(self) -> None:
+            pass
+
+    class SlowThinkingTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "text/event-stream"},
+                stream=SlowThinkingStream(),
+            )
+
+    set_custom_transport(SlowThinkingTransport())
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {consumer_key['api_key']}"},
+        json={
+            "model": "limited-default",
+            "stream": True,
+            "messages": [{"role": "user", "content": "Solve hard problem"}],
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("x-accel-buffering") == "no"
+    assert ": keep-alive" in resp.text
+    assert "Thought complete." in resp.text
+    assert "data: [DONE]" in resp.text
+
+
+def test_preflight_stream_error_status_propagation_and_zero_leak(
+    client: TestClient, consumer_key, mock_upstream
+):
+    """Streaming requests propagate upstream 429/502/504 pre-flight errors before starting a 200 stream."""
+    from tests.conftest import DUMMY_GEMINI_KEY
+
+    def handler_429(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={
+                "error": {
+                    "message": f"Rate limit on upstream key {DUMMY_GEMINI_KEY}"
+                }
+            },
+        )
+
+    mock_upstream(handler_429)
+    resp_429 = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {consumer_key['api_key']}"},
+        json={
+            "model": "limited-default",
+            "stream": True,
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+    assert resp_429.status_code == 429
+    assert DUMMY_GEMINI_KEY not in resp_429.text
+    assert resp_429.json()["error"]["code"] == "upstream_rate_limit"
+
+    def handler_timeout(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout(
+            f"Read timeout with key {DUMMY_GEMINI_KEY}", request=request
+        )
+
+    mock_upstream(handler_timeout)
+    resp_504 = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {consumer_key['api_key']}"},
+        json={
+            "model": "limited-default",
+            "stream": True,
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+    assert resp_504.status_code == 504
+    assert DUMMY_GEMINI_KEY not in resp_504.text
+    assert resp_504.json()["error"]["code"] == "upstream_timeout"
+
+
+def test_persistent_connection_pool_reuse_and_smart_max_tokens(
+    client: TestClient, mock_upstream
+):
+    """Verify shared httpx.AsyncClient reuse and smart max_tokens omission on high-ceiling keys."""
+    from app.upstream import get_shared_client
+
+    high_cap_key = create_virtual_key_record(
+        name="argon-user",
+        allowed_models=["limited-default"],
+        max_tokens_per_request=10240,
+        max_input_chars=16000,
+    )
+
+    captured_payloads = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_payloads.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-pool",
+                "object": "chat.completion",
+                "created": 1700000200,
+                "model": "gemini-4-argon-eap",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Hi!"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 5,
+                    "completion_tokens": 2,
+                    "total_tokens": 7,
+                },
+            },
+        )
+
+    mock_upstream(handler)
+
+    client_before = get_shared_client()
+    # 1. Request without max_tokens on high-ceiling key (10240) -> should NOT inject max_tokens=10240
+    r1 = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {high_cap_key['api_key']}"},
+        json={
+            "model": "limited-default",
+            "messages": [{"role": "user", "content": "Hi"}],
+        },
+    )
+    assert r1.status_code == 200
+    assert "max_tokens" not in captured_payloads[0]
+
+    # 2. Request with explicit max_tokens=20000 on 10240 key -> clamped to 10240
+    r2 = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {high_cap_key['api_key']}"},
+        json={
+            "model": "limited-default",
+            "max_tokens": 20000,
+            "messages": [{"role": "user", "content": "Hi again"}],
+        },
+    )
+    assert r2.status_code == 200
+    assert captured_payloads[1]["max_tokens"] == 10240
+
+    client_after = get_shared_client()
+    assert client_before is client_after
+    assert not client_after.is_closed
