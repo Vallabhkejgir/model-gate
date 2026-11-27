@@ -10,7 +10,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import reload_settings
-from app.database import create_virtual_key_record, init_db
+from app.database import (
+    clear_key_cache,
+    close_db_pool,
+    create_virtual_key_record,
+    init_db,
+    set_pg_connection_factory,
+)
 from app.main import app
 from app.rate_limit import rate_limiter
 from app.upstream import set_custom_transport
@@ -31,14 +37,22 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
     monkeypatch.setenv("ADMIN_MASTER_KEY", DUMMY_ADMIN_KEY)
     monkeypatch.setenv("KEY_HASH_PEPPER", DUMMY_PEPPER)
+    monkeypatch.setenv("DATABASE_URL", "")
     monkeypatch.setenv("DATABASE_PATH", db_file)
+    monkeypatch.setenv("BOOTSTRAP_KEY_RECORDS", "")
 
+    set_pg_connection_factory(None)
+    clear_key_cache()
     reload_settings(
         gemini_api_key=DUMMY_GEMINI_KEY,
         upstream_base_url="https://generativelanguage.googleapis.com/v1beta/openai",
         admin_master_key=DUMMY_ADMIN_KEY,
         key_hash_pepper=DUMMY_PEPPER,
+        database_url="",
         database_path=db_file,
+        key_cache_ttl_seconds=30.0,
+        max_usage_log_rows=5000,
+        bootstrap_key_records="",
         default_limited_model="limited-default",
         model_map={
             "limited-default": "gemini-2.5-flash",
@@ -51,6 +65,9 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     set_custom_transport(None)
     yield db_file
     set_custom_transport(None)
+    set_pg_connection_factory(None)
+    close_db_pool()
+    clear_key_cache()
     rate_limiter.reset()
 
 

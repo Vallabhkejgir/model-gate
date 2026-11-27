@@ -11,8 +11,10 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from app.config import get_settings
 from app.database import (
     create_virtual_key_record,
+    export_bootstrap_key_records,
     get_usage_summary,
     get_virtual_key_by_id,
+    list_bootstrap_key_records,
     list_virtual_keys,
     revoke_virtual_key,
     update_virtual_key_policy,
@@ -197,8 +199,9 @@ async def get_proxy_usage(
 
 @router.get("/api/config", dependencies=[Depends(require_admin_auth)])
 async def get_proxy_config() -> Dict[str, Any]:
-    """Return non-sensitive proxy configuration (never exposes GEMINI_API_KEY)."""
+    """Return non-sensitive proxy configuration (never exposes GEMINI_API_KEY or DATABASE_URL)."""
     settings = get_settings()
+    backend = settings.storage_backend()
     return {
         "gemini_key_configured": bool(settings.gemini_api_key),
         "upstream_base_url": settings.upstream_base_url,
@@ -206,4 +209,19 @@ async def get_proxy_config() -> Dict[str, Any]:
         "model_map": settings.model_map,
         "available_virtual_models": list(settings.model_map.keys()),
         "upstream_timeout_seconds": settings.upstream_timeout_seconds,
+        "storage_backend": backend,
+        "persistent_cloud_db": backend == "postgresql",
+        "key_cache_ttl_seconds": settings.key_cache_ttl_seconds,
+        "max_usage_log_rows": settings.max_usage_log_rows,
+    }
+
+
+@router.get("/api/bootstrap-export", dependencies=[Depends(require_admin_auth)])
+async def get_bootstrap_export() -> Dict[str, Any]:
+    """Export hash-only zero-plaintext virtual key records for BOOTSTRAP_KEY_RECORDS backup."""
+    records = list_bootstrap_key_records()
+    return {
+        "count": len(records),
+        "bootstrap_key_records_json": export_bootstrap_key_records(),
+        "records": records,
     }

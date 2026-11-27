@@ -17,9 +17,18 @@
 - **L6 — SSRF & Redirect Immunity**: Outbound `httpx.AsyncClient(follow_redirects=False)` refuses redirects so the upstream `Authorization` header can never follow a `301/302` to an external host.
 - **L7 — Global Exception Handler**: Any unhandled exception is intercepted, scrubbed through `redact_secrets()`, and returned as a clean OpenAI-formatted `500` JSON response without stack traces.
 
-### 2. Scoped Virtual Consumer Keys (`vk_live_...`)
+### 2. Scoped Virtual Consumer Keys (`vk_live_...`) & Dual-Engine Persistence
 - Generated via CSPRNG (`vk_live_<8-hex-id>_<32-char-secret>`).
-- Plaintext key is displayed **once** upon creation; only `HMAC-SHA256(KEY_HASH_PEPPER, full_key)` is stored in SQLite (WAL mode).
+- Plaintext key is displayed **once** upon creation; only `HMAC-SHA256(KEY_HASH_PEPPER, full_key)` is stored in the database.
+- **Dual-Engine Cloud Persistence (`DATABASE_URL`) + Local SQLite Fallback**:
+  - Set `DATABASE_URL=postgresql://...` (Neon, Supabase, or Render PostgreSQL) so issued virtual keys and usage counters survive ephemeral container redeploys and cold starts.
+  - Omit `DATABASE_URL` to automatically fall back to local SQLite in WAL mode (`DATABASE_PATH=model_gate.db`).
+- **Sub-Millisecond Write-Through Key Cache (`KEY_CACHE_TTL_SECONDS`)**:
+  - Verified key records are cached in memory (`~0.01ms` HMAC verification with zero network round-trip on hot `/v1/chat/completions` and `/v1/models` requests) and immediately updated or evicted on key creation, policy edits, token increments, or revocation.
+- **Zero-Leak Data Hardening**:
+  - `DATABASE_URL` credentials and `postgres://` / `postgresql://` / `mongodb://` URIs are scrubbed by the L2 outbound redaction engine.
+  - `MAX_USAGE_LOG_ROWS` (default `5000`) automatically prunes the oldest metadata-only `usage_logs` entries while preserving cumulative token counters on `virtual_keys`.
+  - `GET /admin/api/bootstrap-export` exports a zero-plaintext JSON snapshot of pre-hashed keys (`key_id`, `key_prefix`, `key_hash`, and policy limits) that can be placed in `BOOTSTRAP_KEY_RECORDS` for instant disaster-recovery seeding on startup.
 - Per-key policy controls:
   - `allowed_models`: Virtual model aliases or explicit models this key can query (e.g. `["limited-default", "gemini-flash-lite"]`).
   - `max_tokens_per_request`: Hard ceiling on output tokens per completion request.

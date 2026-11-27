@@ -122,7 +122,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     settings = get_settings()
-    db_path = args.db_path or settings.database_path
+    db_path = args.db_path
 
     init_db(db_path)
 

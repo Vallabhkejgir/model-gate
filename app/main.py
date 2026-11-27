@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
-from app.database import init_db
+from app.database import close_db_pool, init_db
 from app.routers import admin, proxy
 from app.security import redact_secrets
 from app.upstream import build_openai_error, close_shared_client
@@ -19,12 +19,13 @@ from app.upstream import build_openai_error, close_shared_client
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
-    """Initialize SQLite WAL schema on startup and close shared httpx client on shutdown."""
+    """Initialize database schema on startup and close shared httpx client and DB pool on shutdown."""
     init_db()
     try:
         yield
     finally:
         await close_shared_client()
+        close_db_pool()
 
 
 app = FastAPI(
@@ -107,11 +108,15 @@ async def global_zero_leak_exception_handler(
 async def health_check() -> Dict[str, Any]:
     """Public health check endpoint (never exposes secrets)."""
     settings = get_settings()
+    backend = settings.storage_backend()
     return {
         "status": "ok",
         "service": "model-gate",
         "version": "0.1.0",
         "upstream_configured": bool(settings.gemini_api_key),
+        "storage_backend": backend,
+        "persistent_cloud_db": backend == "postgresql",
+        "key_cache_ttl_seconds": settings.key_cache_ttl_seconds,
     }
 
 
