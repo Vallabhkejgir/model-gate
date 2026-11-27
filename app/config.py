@@ -32,6 +32,16 @@ def _parse_model_map(raw: str | None) -> Dict[str, str]:
     return dict(DEFAULT_MODEL_MAP)
 
 
+def _normalize_database_url(raw: str | None) -> str:
+    """Normalize postgres:// URLs (from Render/Neon/Supabase) to standard postgresql://."""
+    if not raw:
+        return ""
+    cleaned = raw.strip()
+    if cleaned.startswith("postgres://"):
+        return "postgresql://" + cleaned[len("postgres://") :]
+    return cleaned
+
+
 @dataclass
 class Settings:
     """Application settings loaded from environment variables."""
@@ -65,8 +75,26 @@ class Settings:
     model_map: Dict[str, str] = field(
         default_factory=lambda: _parse_model_map(os.environ.get("MODEL_MAP"))
     )
+    database_url: str = field(
+        default_factory=lambda: _normalize_database_url(
+            os.environ.get("DATABASE_URL", "")
+        )
+    )
     database_path: str = field(
         default_factory=lambda: os.environ.get("DATABASE_PATH", "model_gate.db").strip()
+    )
+    key_cache_ttl_seconds: float = field(
+        default_factory=lambda: float(
+            os.environ.get("KEY_CACHE_TTL_SECONDS", "30.0")
+        )
+    )
+    max_usage_log_rows: int = field(
+        default_factory=lambda: int(
+            os.environ.get("MAX_USAGE_LOG_ROWS", "5000")
+        )
+    )
+    bootstrap_key_records: str = field(
+        default_factory=lambda: os.environ.get("BOOTSTRAP_KEY_RECORDS", "").strip()
     )
     upstream_timeout_seconds: float = field(
         default_factory=lambda: float(
@@ -94,6 +122,16 @@ class Settings:
         )
     )
 
+    def __post_init__(self) -> None:
+        self.database_url = _normalize_database_url(self.database_url)
+
+    def storage_backend(self) -> str:
+        """Return 'postgresql' when a Postgres DATABASE_URL is configured, else 'sqlite'."""
+        url = (self.database_url or "").strip().lower()
+        if url.startswith("postgresql://") or url.startswith("postgres://"):
+            return "postgresql"
+        return "sqlite"
+
     def resolve_upstream_model(self, requested_model: str) -> str:
         """Map a consumer-facing virtual model name to the actual upstream model."""
         return self.model_map.get(requested_model, requested_model)
@@ -116,6 +154,8 @@ def reload_settings(**overrides) -> Settings:
     s = Settings()
     for key, value in overrides.items():
         if hasattr(s, key):
+            if key == "database_url":
+                value = _normalize_database_url(value)
             setattr(s, key, value)
     _settings = s
     return _settings

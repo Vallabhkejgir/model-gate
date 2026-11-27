@@ -14,12 +14,15 @@ from app.config import Settings, get_settings
 
 REDACTED_PLACEHOLDER = "[REDACTED_SECRET]"
 
-# Pre-compiled patterns for common API credential formats
+# Pre-compiled patterns for common API credential formats and database URIs
 _COMMON_SECRET_PATTERNS = [
     re.compile(r"AIza[0-9A-Za-z\-_]{20,}"),
     re.compile(r"sk-[0-9A-Za-z\-_]{16,}"),
     re.compile(r"(?i)Bearer\s+[0-9A-Za-z\-_\.]{16,}"),
     re.compile(r"vk_live_[0-9a-f]{8}_[0-9A-Za-z\-_]{16,}"),
+    re.compile(r"(?i)postgres(?:ql)?://[^\s\"'<>]+"),
+    re.compile(r"(?i)mongodb(?:\+srv)?://[^\s\"'<>]+"),
+    re.compile(r"mg_snap_v1_[A-Za-z0-9_\-\.=]+"),
 ]
 
 
@@ -107,18 +110,35 @@ def parse_virtual_key_id(plaintext_key: str) -> str | None:
 
 
 def redact_secrets(text: str | None, settings: Settings | None = None) -> str:
-    """Scrub any occurrence of upstream API keys, master keys, peppers, or bearer tokens."""
+    """Scrub any occurrence of upstream API keys, master keys, peppers, DB URLs, or bearer tokens."""
     if not text:
         return ""
     cfg = settings or get_settings()
     scrubbed = str(text)
 
-    sensitive_literals = []
-    for raw_secret in (
+    raw_candidates = [
         cfg.gemini_api_key,
         cfg.admin_master_key,
         cfg.key_hash_pepper,
-    ):
+        cfg.database_url,
+    ]
+    if cfg.database_url:
+        if cfg.database_url.startswith("postgresql://"):
+            raw_candidates.append(
+                "postgres://" + cfg.database_url[len("postgresql://") :]
+            )
+        try:
+            parsed_db = urllib.parse.urlsplit(cfg.database_url)
+            if parsed_db.password:
+                raw_candidates.append(parsed_db.password)
+                unquoted_pw = urllib.parse.unquote(parsed_db.password)
+                if unquoted_pw != parsed_db.password:
+                    raw_candidates.append(unquoted_pw)
+        except Exception:
+            pass
+
+    sensitive_literals = []
+    for raw_secret in raw_candidates:
         if raw_secret and len(raw_secret) >= 4:
             sensitive_literals.append(raw_secret)
             url_enc = urllib.parse.quote(raw_secret, safe="")

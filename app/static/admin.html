@@ -196,12 +196,14 @@
     <div class="brand">
       <h1>Model-Gate Operator Console</h1>
       <span class="badge" id="upstreamBadge">Zero-Leak Gemini Proxy</span>
+      <span class="badge" id="storageEngineBadge">Storage: SQLite (Local)</span>
       <span class="badge" id="sessionStatusBadge">Not Connected</span>
     </div>
     <div class="auth-bar">
       <input type="password" id="adminKeyInput" placeholder="Enter ADMIN_MASTER_KEY" style="width: 240px;" />
       <button onclick="connectAdmin()">Connect</button>
       <button class="secondary" onclick="refreshAll()">Refresh</button>
+      <button class="secondary" onclick="copyBootstrapExport()">Copy Hash Backup</button>
       <button class="secondary" onclick="disconnectAdmin()">Logout</button>
     </div>
   </header>
@@ -420,6 +422,16 @@
         setSessionBadge(true);
 
         document.getElementById("statGeminiStatus").textContent = cfg.gemini_key_configured ? "Configured (Hidden)" : "Missing";
+        const storageBadge = document.getElementById("storageEngineBadge");
+        if (storageBadge) {
+          if (cfg.persistent_cloud_db || cfg.storage_backend === "postgresql") {
+            storageBadge.textContent = "PostgreSQL (Cloud Persistent)";
+            storageBadge.className = "badge ok";
+          } else {
+            storageBadge.textContent = "SQLite (Local)";
+            storageBadge.className = "badge";
+          }
+        }
         const keys = keysRes.data || [];
         document.getElementById("statActiveKeys").textContent = keys.filter(k => k.is_active).length + " / " + keys.length;
         document.getElementById("statTotalRequests").textContent = usageRes.summary.total_requests;
@@ -538,6 +550,21 @@
         body: JSON.stringify({ reset_usage: true })
       });
       refreshAll();
+    }
+
+    async function copyBootstrapExport() {
+      try {
+        const res = await apiFetch("/admin/api/bootstrap-export");
+        const jsonStr = res.bootstrap_key_records_json || "[]";
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(jsonStr);
+          alert("Copied " + res.count + " hash-only key record(s) to clipboard for BOOTSTRAP_KEY_RECORDS.");
+        } else {
+          prompt("Copy BOOTSTRAP_KEY_RECORDS JSON:", jsonStr);
+        }
+      } catch (err) {
+        alert("Failed to export bootstrap records: " + err.message);
+      }
     }
   </script>
 </body>
